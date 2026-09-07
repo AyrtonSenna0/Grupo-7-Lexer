@@ -80,13 +80,335 @@ class Lexer:
 
     def __init__(self, source: str):
         self.source = source
-        # TODO: inicialize aqui o estado exigido por sua estratégia.
+        self.linha = 1
+        self.coluna = 1
+        self.posi = 0
+        self.reservadas ={
+                          "bool": TokenKind.KW_BOOL,"else": TokenKind.KW_ELSE,
+                          "false": TokenKind.KW_FALSE,"if": TokenKind.KW_IF,
+                          "int": TokenKind.KW_INT,"print": TokenKind.KW_PRINT,
+                          "return": TokenKind.KW_RETURN,"true": TokenKind.KW_TRUE, "while": TokenKind.KW_WHILE,
+                        }
 
     def tokens(self) -> Iterator[Token]:
         """Produza todos os tokens significativos e um único EOF ao final."""
-        raise NotImplementedError("implemente o analisador léxico")
-        yield  # mantém este método como gerador durante o desenvolvimento
+        if  not (self.__ver_ascii(self.source)):
+            raise LexerError("Caracteres fora do padrao ASCII",0,0)
+        while self.posi < len(self.source):
+            while  self.posi < len(self.source) and (
+                   self.source[self.posi] == ' ' 
+                   or self.source[self.posi] == '\t'
+                   or self.source[self.posi] == '\n'
+                   or (self.source[self.posi] == '/' and 
+                   self.posi+1 < len(self.source) and (
+                   self.source[self.posi+1] == '*' or self.source[self.posi+1] == '/'))
+            ):
+                if self.source[self.posi] == '/':
+                    if self.source[self.posi+1] == '*':
+                        linha = self.linha
+                        coluna = self.coluna
+                        self.coluna += 2
+                        self.posi += 2
+                        while((self.posi+1) < len(self.source) and not(
+                            self.source[self.posi] == '*' and self.source[self.posi+1] == '/')
+                        ):
+                            if self.source[self.posi] == '\n':
+                                self.linha += 1
+                                self.coluna = 1
+                            elif self.source[self.posi] == '\t':
+                                self.coluna += 4
+                            else:
+                                self.coluna += 1
+                            self.posi += 1
+                        if (self.posi + 1) >= len(self.source) or self.source[self.posi] != '*':
+                            raise LexerError("Esperando '*/'",linha,coluna)
+                        else:
+                            self.coluna += 2
+                            self.posi += 2
+                    elif self.source[self.posi+1] == '/':
+                        self.coluna += 2
+                        self.posi += 2
+                        while self.posi < len(self.source) and self.source[self.posi] != '\n':
+                            if self.source[self.posi] == '\t':
+                                self.coluna += 4
+                            else:
+                                self.coluna += 1
+                            self.posi +=1
+                        if self.posi < len(self.source) and self.source[self.posi] == '\n':
+                            self.linha += 1
+                            self.coluna = 1
+                            self.posi += 1
+                while self.posi < len(self.source) and (
+                      self.source[self.posi] == ' '
+                      or self.source[self.posi] == '\t'
+                      or self.source[self.posi] ==  '\n'
+                ):
+                    if self.source[self.posi] == '\n':
+                        self.linha += 1
+                        self.coluna = 1
+                    elif self.source[self.posi] == '\t':
+                        self.coluna += 4
+                    else:
+                        self.coluna += 1
+                    self.posi += 1
+            if self.posi < len(self.source):
+                yield self.__iden_tokens()
+
+        yield Token(TokenKind.EOF, '', None, self.linha, self.coluna)
 
     def scan(self) -> list[Token]:
         return list(self.tokens())
 
+    def __iden_tokens(self):
+        if self.source[self.posi].isdigit():
+            return self.__trata_dig()
+        
+        elif self.source[self.posi].isalpha() or(
+             self.source[self.posi] == '_'
+        ):
+            return self.__trata_identif()
+
+        elif(self.source[self.posi] == '='
+             or  self.source[self.posi] == '<'
+             or  self.source[self.posi] == '>'
+             or  self.source[self.posi] == '!'
+             or  self.source[self.posi] == '&'
+             or  self.source[self.posi] == '|'
+        ):
+            return self.__trata_relacional()
+        
+        elif(self.source[self.posi] == '+'
+             or  self.source[self.posi] == '-'
+             or  self.source[self.posi] == '*'
+             or  self.source[self.posi] == '/'
+             or  self.source[self.posi] == '%'
+        ):
+            return self.__trata_operacional()
+        
+        elif(self.source[self.posi] == '('
+             or  self.source[self.posi] == ')'
+             or  self.source[self.posi] == '{'
+             or  self.source[self.posi] == '}'
+             or  self.source[self.posi] == ','
+             or  self.source[self.posi] == ';'
+        ):
+            return self.__trata_pontuacao()
+        
+        elif self.source[self.posi] == '"':
+            return self.__trata_string()
+        else:
+            raise LexerError("Simbolo invalido", self.linha, self.coluna)
+
+    def __trata_dig(self):
+        digito = self.source[self.posi]
+        coluna = self.coluna
+        self.posi +=1
+        self.coluna +=1
+        while self.posi < len(self.source) and (
+              self.source[self.posi].isdigit()
+        ):
+            self.coluna+=1
+            digito += self.source[self.posi]
+            self.posi+=1
+        return Token(TokenKind.INT_LITERAL,digito,int(digito),self.linha,coluna )
+            
+    def __trata_identif(self):
+        coluna = self.coluna
+        lex = self.source[self.posi]
+        self.posi +=1
+        self.coluna +=1
+        while self.posi < len(self.source) and(
+              self.source[self.posi].isalpha() or
+              self.source[self.posi].isdigit() or
+              self.source[self.posi] == '_'
+        ):
+            lex += self.source[self.posi]
+            self.coluna +=1
+            self.posi +=1
+        if lex in self.reservadas:
+            kind = self.reservadas[lex]
+            if kind == TokenKind.KW_TRUE:
+                return Token(kind, lex,True,self.linha,coluna)
+            elif kind == TokenKind.KW_FALSE:
+                return Token(kind, lex,False,self.linha,coluna)
+            else:
+                return Token(kind, lex,None,self.linha,coluna)
+        else:
+            return Token(TokenKind.IDENTIFIER, lex, lex, self.linha, coluna)
+        
+    def __trata_relacional(self):
+        if self.source[self.posi] == '=':
+            if (self.posi+1) < len(self.source) and(
+                self.source[self.posi+1] == '='
+            ):
+                self.posi += 2
+                self.coluna += 2
+                return Token(TokenKind.EQUAL_EQUAL,"==", None, self.linha, (self.coluna-2))
+            else:
+                self.posi +=1
+                self.coluna+=1
+                return Token(TokenKind.ASSIGN,'=', None, self.linha, (self.coluna-1))
+            
+        elif self.source[self.posi] == '<':
+            if (self.posi+1) < len(self.source) and(
+                self.source[self.posi+1] == '='
+            ):
+                self.posi += 2
+                self.coluna += 2
+                return Token(TokenKind.LESS_EQUAL,"<=", None, self.linha, (self.coluna-2))
+            
+            else:
+                self.posi +=1
+                self.coluna+=1
+                return Token(TokenKind.LESS,'<', None, self.linha, (self.coluna-1))
+            
+        elif self.source[self.posi] == '>':
+            if (self.posi+1) < len(self.source) and(
+                self.source[self.posi+1] == '='
+            ):
+                self.posi += 2
+                self.coluna += 2
+                return Token(TokenKind.GREATER_EQUAL,">=", None, self.linha, (self.coluna-2))
+            else:
+                self.posi +=1
+                self.coluna+=1
+                return Token(TokenKind.GREATER,'>', None, self.linha, (self.coluna-1))
+        elif self.source[self.posi] == '!':
+            if (self.posi+1) < len(self.source) and(
+            self.source[self.posi+1] == '='
+            ):
+                self.posi += 2
+                self.coluna += 2
+                return Token(TokenKind.NOT_EQUAL,"!=", None, self.linha, (self.coluna-2))
+            else:
+                self.posi +=1
+                self.coluna+=1
+                return Token(TokenKind.LOGICAL_NOT,'!', None, self.linha, (self.coluna-1))
+
+        elif self.source[self.posi] == '&':
+            if (self.posi+1) < len(self.source) and(
+                self.source[self.posi+1] == '&'
+            ):
+                self.posi += 2
+                self.coluna += 2
+                return Token(TokenKind.LOGICAL_AND,"&&", None, self.linha, (self.coluna-2))
+            else:
+                raise LexerError("Simbolo invalido '&'", self.linha, self.coluna)
+
+        elif self.source[self.posi] == '|':
+            if (self.posi+1) < len(self.source) and(
+                self.source[self.posi+1] == '|'
+            ):
+                self.posi += 2
+                self.coluna += 2
+                return Token(TokenKind.LOGICAL_OR,"||", None, self.linha, (self.coluna-2))
+            else:
+                raise LexerError("Simbolo invalido '|'", self.linha, self.coluna)
+
+    def __trata_operacional(self):
+        if self.source[self.posi] == '+':
+            self.coluna +=1
+            self.posi +=1
+            return Token(TokenKind.PLUS,"+", None, self.linha, (self.coluna-1))
+
+        elif self.source[self.posi] == '-':
+            self.coluna +=1
+            self.posi +=1
+            return Token(TokenKind.MINUS,"-", None, self.linha, (self.coluna-1))
+
+        elif self.source[self.posi] == '*':
+            self.coluna +=1
+            self.posi +=1
+            return Token(TokenKind.STAR,"*", None, self.linha, (self.coluna-1))
+
+        elif self.source[self.posi] == '/':
+            self.coluna +=1
+            self.posi +=1
+            return Token(TokenKind.SLASH,"/", None, self.linha, (self.coluna-1))
+
+        elif self.source[self.posi] == '%':
+            self.coluna +=1
+            self.posi +=1
+            return Token(TokenKind.PERCENT,"%", None, self.linha, (self.coluna-1))
+        
+    def __trata_pontuacao(self):
+            if self.source[self.posi] == '(':
+                self.coluna +=1
+                self.posi +=1
+                return Token(TokenKind.LEFT_PAREN,"(", None, self.linha, (self.coluna-1))
+    
+            elif self.source[self.posi] == ')':
+                self.coluna +=1
+                self.posi +=1
+                return Token(TokenKind.RIGHT_PAREN,")", None, self.linha, (self.coluna-1))
+    
+            elif self.source[self.posi] == '{':
+                self.coluna +=1
+                self.posi +=1
+                return Token(TokenKind.LEFT_BRACE,"{", None, self.linha, (self.coluna-1))
+    
+            elif self.source[self.posi] == '}':
+                self.coluna +=1
+                self.posi +=1
+                return Token(TokenKind.RIGHT_BRACE,"}", None, self.linha, (self.coluna-1))
+    
+            elif self.source[self.posi] == ',':
+                self.coluna +=1
+                self.posi +=1
+                return Token(TokenKind.COMMA,",", None, self.linha, (self.coluna-1))
+
+            elif self.source[self.posi] == ';':
+                self.coluna +=1
+                self.posi +=1
+                return Token(TokenKind.SEMICOLON,";", None, self.linha, (self.coluna-1))
+
+    def __trata_string(self):
+        coluna = self.coluna
+        self.posi +=1
+        self.coluna +=1
+        string = ""
+        while self.posi < len(self.source) and(
+              self.source[self.posi] != '"'
+        ):
+            if self.source[self.posi] == '\n':
+                raise LexerError("'(' nao fechado",self.linha,coluna)
+            
+            if self.source[self.posi] == '\\':
+               if (self.posi+1) < len(self.source):
+                   if self.source[self.posi+1] == 'n':
+                       string += '\n'
+                       self.coluna +=2
+                       self.posi +=2
+
+                   elif self.source[self.posi+1] == 't':
+                       string += '\t'
+                       self.coluna +=2
+                       self.posi +=2                      
+
+                   elif self.source[self.posi+1] == '"':
+                       string += '\"'
+                       self.coluna +=2
+                       self.posi +=2            
+
+                   elif self.source[self.posi+1] == '\\':
+                       string += '\\'
+                       self.coluna +=2
+                       self.posi +=2      
+
+                   else:
+                       raise LexerError("String Literal nao terminada", self.linha, coluna)
+               else:
+                   raise LexerError("String Literal nao terminada", self.linha, coluna)
+            else:
+                string += self.source[self.posi]
+                self.coluna+=1
+                self.posi+=1
+        if self.posi < len(self.source) and self.source[self.posi] == '"':
+            self.posi +=1
+            self.coluna+=1
+            return Token(TokenKind.STRING_LITERAL,string, string,self.linha, coluna)
+        else:
+            raise LexerError("String Literal nao terminada", self.linha, coluna)
+
+    def __ver_ascii(lista: list[str]) -> bool:
+        return all(texto.isascii() for texto in lista)
